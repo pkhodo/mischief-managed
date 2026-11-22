@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>Mischief Managed</string>
+<key>CFBundleDisplayName</key><string>Mischief Managed</string>
+<key>CFBundleIdentifier</key><string>com.pkhodo.FrameDesk</string>
+<key>CFBundleExecutable</key><string>FrameDesk</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.6.0</string>
+<key>CFBundleVersion</key><string>10</string>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSScreenCaptureUsageDescription</key><string>Mischief Managed captures your selected desktop area into a preview window you can share in meetings.</string>
+<key>NSAccessibilityUsageDescription</key><string>Mischief Managed reads window positions and titles to save layouts, and moves windows when you restore or tile them.</string>
+<key>NSAppleEventsUsageDescription</key><string>Mischief Managed opens dedicated Microsoft Edge windows for your activity websites and saves and closes only those windows when you ask.</string>
+</dict></plist>
