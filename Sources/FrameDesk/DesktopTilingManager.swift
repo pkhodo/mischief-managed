@@ -51,6 +51,7 @@ final class DesktopTilingManager: ObservableObject {
     func startIfInteractive() {
         let arguments = ProcessInfo.processInfo.arguments
         guard !arguments.contains(where: { $0.hasSuffix("check") || $0.contains("snapshot") }) else { return }
+        if !started { TilingDiagnostics.traceManualDropsIfRequested(manager: self) }
         // Isolated fixture runs keep using their explicit enabled and Shift flags.
         start(automaticallySnap: !arguments.contains("--fixture-windows-only"))
     }
@@ -337,7 +338,7 @@ final class DesktopTilingManager: ObservableObject {
     private func handle(_ event: NSEvent) {
         onDiagnosticEvent?("event \(event.type.rawValue); detecting=\(detectingScene); enabled=\(enabled)")
         guard enabled, !detectingScene, WindowManager.allowed else { cancelDrag(); return }
-        let point = NSEvent.mouseLocation
+        let point = event.cgEvent?.unflippedLocation ?? NSEvent.mouseLocation
         switch event.type {
         case .leftMouseDown:
             cancelDrag()
@@ -356,20 +357,26 @@ final class DesktopTilingManager: ObservableObject {
             drag = current
             updateDragFeedback(point: point, flags: event.modifierFlags)
         case .flagsChanged:
-            if drag != nil { updateDragFeedback(point: point, flags: event.modifierFlags) }
+            if drag != nil { updateDragFeedback(point: NSEvent.mouseLocation, flags: event.modifierFlags) }
         case .leftMouseUp:
-            guard let current = drag else { return }
+            guard let current = drag else { onDiagnosticEvent?("drop without a tracked window drag"); return }
             let destination = target(at: point)
             let bypass = event.modifierFlags.contains(.option) || (requireShift && !event.modifierFlags.contains(.shift))
             let token = generation; drag = nil; refreshOverlays()
+            onDiagnosticEvent?("drop tile=\(String(describing: destination?.index)); moved=\(current.moved); bypass=\(bypass)")
             guard !bypass, let destination else { return }
             // Global events are copies. Let the target application finish its mouse-up first.
             DispatchQueue.main.asyncAfter(deadline: .now()+0.12) { [weak self] in
-                guard let self, token == self.generation, self.enabled, WindowManager.allowed,
-                      let frame = WindowManager.frame(current.window.element),
-                      abs(frame.width-current.origin.width) < 3, abs(frame.height-current.origin.height) < 3,
-                      hypot(frame.minX-current.origin.minX, frame.minY-current.origin.minY) > 4 else { return }
-                self.snap(current.window, to: destination.frame, display: destination.display, previous: current.window)
+                guard let self, token == self.generation, self.enabled, WindowManager.allowed else { return }
+                if !current.moved {
+                    guard let frame = WindowManager.frame(current.window.element),
+                          abs(frame.width-current.origin.width) < 3, abs(frame.height-current.origin.height) < 3,
+                          hypot(frame.minX-current.origin.minX, frame.minY-current.origin.minY) > 4 else { return }
+                }
+                guard let display = self.displays.first(where: { $0.id == destination.display.id }) else { return }
+                let frames = self.grid(display: display.id).frames(in: display.visible)
+                guard frames.indices.contains(destination.index) else { return }
+                self.snap(current.window, to: frames[destination.index], display: display, previous: current.window)
             }
         default: break
         }
@@ -380,11 +387,11 @@ final class DesktopTilingManager: ObservableObject {
         refreshOverlays(dragTarget: target.map { ($0.display.id, $0.index) })
         if let target { onDragHighlight?(target.display.id, target.index) }
     }
-    private func target(at point: CGPoint) -> (display: Display, index: Int, frame: CGRect)? {
+    private func target(at point: CGPoint) -> (display: Display, index: Int)? {
         guard let display = displays.first(where: { $0.visible.contains(point) }) else { return nil }
         let config = grid(display: display.id)
         guard let index = config.zone(at: point, in: display.visible) else { return nil }
-        return (display, index, config.frames(in: display.visible)[index])
+        return (display, index)
     }
     private func window(at point: CGPoint) -> LiveWindow? {
         let system = AXUIElementCreateSystemWide(); AXUIElementSetMessagingTimeout(system, 0.25)
@@ -424,35 +431,48 @@ final class DesktopTilingManager: ObservableObject {
         // Revalidate exact AX identity immediately before a move; never title-match a drag.
         guard let live = try? WindowManager.scan(bundleIDs: [window.placement.bundleID]),
               live.contains(where: { CFEqual($0.element, window.element) }),
-              !detectingScene, commit(file) else { return }
+              !detectingScene, commit(file) else { onDiagnosticEvent?("snap could not revalidate the window"); return }
+        onDiagnosticEvent?("snap target: \(target)")
         generation += 1
         let token = generation
         let scope = file.activeScope
         let context = currentContext
         _ = WindowManager.move(window, to: target)
 
-        // Some apps apply AX geometry asynchronously or replace it after a drop.
-        // Give a slow resize time to settle before making another request.
+        // Position and size can change for several frames after a single AX write.
+        // Wait for the frame to hold before correcting or saving it.
         Task { [weak self] in
-            let waits = [100, 150, 180, 180]
-            for (index, wait) in waits.enumerated() {
-                try? await Task.sleep(for: .milliseconds(wait))
-                guard let self, self.canFinishSnap(token, scope: scope, context: context) else { return }
-                guard let actual = WindowManager.frame(window.element) else {
-                    self.error = "The app window closed before its position could be saved."
+            let start = ContinuousClock.now
+            var settlement = TileSnapSettlement(target: target)
+            while let self, self.canFinishSnap(token, scope: scope, context: context) {
+                let actual = WindowManager.frame(window.element)
+                let elapsed = start.duration(to: .now)
+                self.onDiagnosticEvent?("snap at \(elapsed): \(String(describing: actual))")
+                switch settlement.observe(actual, elapsed: elapsed) {
+                case .wait:
+                    break
+                case .correct(let position, let size):
+                    if size {
+                        self.onDiagnosticEvent?("snap size does not match after settling; retrying resize")
+                        // Preserve the initial size-position-size sequence. Some
+                        // windows accept a size change only with a position write.
+                        _ = WindowManager.move(window, to: target)
+                    } else if position {
+                        self.onDiagnosticEvent?("snap position does not match after resize; correcting position")
+                        WindowManager.reposition(window, atTopLeftOf: target)
+                    }
+                case .finish:
+                    if let actual {
+                        self.finishSnap(window, to: target, actual: actual, displayID: display.id, previous: previous, live: live)
+                    }
+                    return
+                case .unsettled:
+                    self.undo = Undo(scope: scope, profile: self.currentProfile(), windows: [previous], displays: self.displaySnapshot, context: context)
+                    self.canUndo = true
+                    self.status = "Couldn’t confirm where \(window.placement.appName) settled. Its saved position is unchanged. Undo is available."
                     return
                 }
-                if self.fillsTile(actual, target) || index == waits.count - 1 {
-                    self.finishSnap(window, to: target, actual: actual, displayID: display.id, previous: previous, live: live)
-                    return
-                }
-                if abs(actual.width - target.width) <= 1, abs(actual.height - target.height) <= 1 {
-                    self.onDiagnosticEvent?("snap position does not match after resize; correcting position")
-                    WindowManager.reposition(window, atTopLeftOf: target)
-                } else if index > 0 {
-                    self.onDiagnosticEvent?("snap size does not match after settling; retrying resize")
-                    _ = WindowManager.move(window, to: target)
-                }
+                try? await Task.sleep(for: .milliseconds(50))
             }
         }
     }
@@ -463,16 +483,13 @@ final class DesktopTilingManager: ObservableObject {
     private func atTileOrigin(_ frame: CGRect, _ tile: CGRect) -> Bool {
         abs(frame.minX - tile.minX) < 5 && abs(frame.maxY - tile.maxY) < 5
     }
-    private func fillsTile(_ frame: CGRect, _ tile: CGRect) -> Bool {
-        abs(frame.minX - tile.minX) <= 1 && abs(frame.maxX - tile.maxX) <= 1
-            && abs(frame.minY - tile.minY) <= 1 && abs(frame.maxY - tile.maxY) <= 1
-    }
     private func finishSnap(_ window: LiveWindow, to target: CGRect, actual: CGRect, displayID: String,
                             previous: LiveWindow, live: [LiveWindow]) {
         guard let display = displays.first(where: { $0.id == displayID }) else { return }
         let profile = currentProfile()
         let positioned = atTileOrigin(actual, target)
-        let exact = fillsTile(actual, target)
+        let exact = TileSnapSettlement.fillsTile(actual, target)
+        onDiagnosticEvent?("snap final: \(actual); fits=\(exact)")
         let operationUndo = Undo(scope: file.activeScope, profile: profile, windows: [previous], displays: displaySnapshot, context: currentContext)
         guard positioned else {
             undo = operationUndo

@@ -34,9 +34,8 @@ final class Cards: NSObject, NSApplicationDelegate {
         let command = directory.appendingPathComponent("command.txt")
         if let text = try? String(contentsOf: command, encoding: .utf8) {
             switch text.trimmingCharacters(in: .whitespacesAndNewlines) {
-            case "arm-position-reset", "arm-size-reset":
-                let resetSize = text.trimmingCharacters(in: .whitespacesAndNewlines) == "arm-size-reset"
-                let resetName = resetSize ? "size-reset" : "position-reset"
+            case "arm-position-reset", "arm-size-reset", "arm-progressive-resize":
+                let resetName = String(text.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst(4))
                 let ready = directory.appendingPathComponent("\(resetName)-armed")
                 if !FileManager.default.fileExists(atPath: ready.path), let window = windows.first {
                     // Model an app that replaces part of the frame after accepting AX geometry.
@@ -47,7 +46,9 @@ final class Cards: NSObject, NSApplicationDelegate {
                         self.frameResetObserver = nil
                         let origin = window.frame.origin
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                            if resetSize {
+                            if resetName == "progressive-resize" {
+                                self.animateResize(window, from: sizeBeforeResize)
+                            } else if resetName == "size-reset" {
                                 let current = window.frame
                                 window.setFrame(CGRect(x: current.minX, y: current.maxY - sizeBeforeResize.height,
                                                        width: sizeBeforeResize.width, height: sizeBeforeResize.height), display: true)
@@ -68,6 +69,22 @@ final class Cards: NSObject, NSApplicationDelegate {
         let frames = windows.enumerated().map { i,w in ["index":i,"number":w.windowNumber,"title":w.title,"x":w.frame.minX,"y":w.frame.minY,"width":w.frame.width,"height":w.frame.height] as [String:Any] }
         if let data = try? JSONSerialization.data(withJSONObject: frames, options: .prettyPrinted) { try? data.write(to: directory.appendingPathComponent("fixture-frames.json"), options: .atomic) }
         if FileManager.default.fileExists(atPath: directory.appendingPathComponent("quit").path) { NSApp.terminate(nil) }
+    }
+    private func animateResize(_ window: NSWindow, from start: CGSize) {
+        let target = window.frame.size
+        for step in 0...10 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.08) { [weak self, weak window] in
+                guard let self, let window else { return }
+                let fraction = CGFloat(step) / 10
+                let width = start.width + (target.width - start.width) * fraction
+                let height = start.height + (target.height - start.height) * fraction
+                let frame = window.frame
+                window.setFrame(CGRect(x: frame.minX, y: frame.maxY - height, width: width, height: height), display: true)
+                if step == 10 {
+                    try? Data().write(to: self.directory.appendingPathComponent("progressive-resize-complete"))
+                }
+            }
+        }
     }
 }
 let application = NSApplication.shared

@@ -5,6 +5,17 @@ import Darwin
 
 @MainActor
 enum TilingDiagnostics {
+    static func traceManualDropsIfRequested(manager: DesktopTilingManager) {
+        guard let path = ProcessInfo.processInfo.environment["FRAMEDESK_SNAP_TRACE"],
+              let log = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) else { return }
+        let relevant = ["mouse down window hit=", "drop ", "snap "]
+        manager.onDiagnosticEvent = { event in
+            guard relevant.contains(where: { event.hasPrefix($0) }) else { return }
+            let line = "\(ProcessInfo.processInfo.systemUptime) \(event)\n"
+            try? log.write(contentsOf: Data(line.utf8))
+        }
+    }
+
     static func runIfRequested(state: AppState) {
         let args = ProcessInfo.processInfo.arguments
         guard let flag = args.firstIndex(of: "--tiling-check"), args.indices.contains(flag+1) else { return }
@@ -289,6 +300,47 @@ enum TilingDiagnostics {
             } == true)
             defaultManager.undoLastMove()
             try check("corrected_resize_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
+            let beforeAnimation = try defaultManager.store.load().profiles["desktop"]?.windows
+            let animationTarget = defaultManager.grid(display: display.id).frames(in: display.visible)[3]
+            try check("progressive_resize_starts_with_different_saved_frame", beforeAnimation?.first.map {
+                !near(Geometry.expanded($0.normalized, in: display.visible), animationTarget)
+            } == true)
+            sizeCorrections = 0
+            var progressiveTrace: [String] = []
+            defaultManager.onDiagnosticEvent = { event in
+                if event.hasPrefix("snap") { progressiveTrace.append(event) }
+                if event == "snap size does not match after settling; retrying resize" { sizeCorrections += 1 }
+            }
+            try "arm-progressive-resize".write(to: fixtureDirectory.appendingPathComponent("command.txt"), atomically: true, encoding: .utf8)
+            let animationArmed = fixtureDirectory.appendingPathComponent("progressive-resize-armed")
+            for _ in 0..<30 where !FileManager.default.fileExists(atPath: animationArmed.path) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            try check("progressive_resize_fixture_armed", FileManager.default.fileExists(atPath: animationArmed.path))
+            try await drag(a, manager: defaultManager, to: CGPoint(x: animationTarget.midX, y: animationTarget.midY),
+                           cursorAfterDrop: CGPoint(x: target.midX, y: target.midY))
+            try await Task.sleep(for: .milliseconds(325))
+            let animationComplete = fixtureDirectory.appendingPathComponent("progressive-resize-complete")
+            metadata["progressive_resize_trace"] = progressiveTrace
+            metadata["progressive_resize_status"] = defaultManager.status
+            metadata["progressive_resize_mid_animation_frame"] = box(WindowManager.frame(a.element))
+            try check("progressive_resize_started", FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("progressive-resize-observed").path))
+            try check("progressive_resize_still_running", !FileManager.default.fileExists(atPath: animationComplete.path))
+            try check("moving_frame_is_neither_retried_nor_saved",
+                      sizeCorrections == 0 && (try defaultManager.store.load().profiles["desktop"]?.windows == beforeAnimation))
+            try await Task.sleep(for: .milliseconds(375))
+            try check("progressive_resize_completed", FileManager.default.fileExists(atPath: animationComplete.path))
+            metadata["progressive_resize_trace"] = progressiveTrace
+            try check("one_drop_fills_released_tile_after_progressive_resize", WindowManager.frame(a.element).map {
+                TileSnapSettlement.fillsTile($0, animationTarget)
+            } == true)
+            let animatedPlacement = try defaultManager.store.load().profiles["desktop"]?.windows.first
+            try check("progressive_resize_saves_final_frame", animatedPlacement.map {
+                near(Geometry.expanded($0.normalized, in: display.visible), animationTarget)
+            } == true)
+            defaultManager.undoLastMove()
+            try check("progressive_resize_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
+            try check("progressive_resize_undo_restores_saved_frame", try defaultManager.store.load().profiles["desktop"]?.windows == beforeAnimation)
             // Compare the live result with independently calculated guide edges,
             // rather than comparing it with the application's old inset target.
             defaultManager.setGrid(TileGrid(preset: .focus), scope: "desktop", name: "Desktop", display: display.id)
@@ -329,7 +381,7 @@ enum TilingDiagnostics {
         }
         return false
     }
-    private static func drag(_ window: LiveWindow, manager:DesktopTilingManager, to point: CGPoint, flags: CGEventFlags = []) async throws {
+    private static func drag(_ window: LiveWindow, manager:DesktopTilingManager, to point: CGPoint, flags: CGEventFlags = [], cursorAfterDrop: CGPoint? = nil) async throws {
         guard let frame = WindowManager.frame(window.element) else { throw Failure("Fixture disappeared") }
         var pid: pid_t = 0; AXUIElementGetPid(window.element, &pid)
         let activated=NSRunningApplication(processIdentifier: pid)?.activate(options: []) ?? false
@@ -344,9 +396,9 @@ enum TilingDiagnostics {
             if stable>=4 { break }
         }
         guard stable>=4 else { throw Failure("Display detection did not settle before fixture drag") }
-        try await mouse(from: CGPoint(x: frame.midX, y: frame.maxY-13), to: point, flags: flags)
+        try await mouse(from: CGPoint(x: frame.midX, y: frame.maxY-13), to: point, flags: flags, cursorAfterDrop: cursorAfterDrop)
     }
-    private static func mouse(from start: CGPoint, to end: CGPoint, flags: CGEventFlags = []) async throws {
+    private static func mouse(from start: CGPoint, to end: CGPoint, flags: CGEventFlags = [], cursorAfterDrop: CGPoint? = nil) async throws {
         let source = CGEventSource(stateID: .hidSystemState)
         func post(_ kind: CGEventType, at p: CGPoint) {
             let quartz = CGPoint(x: p.x, y: Display.primaryTop-p.y)
@@ -360,7 +412,9 @@ enum TilingDiagnostics {
             post(.leftMouseDragged, at: CGPoint(x: start.x+(end.x-start.x)*amount, y: start.y+(end.y-start.y)*amount))
             try await Task.sleep(nanoseconds: 30_000_000)
         }
-        post(.leftMouseUp, at: end); try await Task.sleep(nanoseconds: 450_000_000)
+        post(.leftMouseUp, at: end)
+        if let cursorAfterDrop { post(.mouseMoved, at: cursorAfterDrop) }
+        try await Task.sleep(nanoseconds: 450_000_000)
     }
     private static func near(_ frame: CGRect?, _ target: CGRect) -> Bool {
         guard let frame else { return false }
