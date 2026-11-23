@@ -240,6 +240,33 @@ enum TilingDiagnostics {
                 try await drag(a, manager: defaultManager, to: point)
                 try check("tile_drop_\(label)_resizes_to_full_tile", near(WindowManager.frame(a.element), target))
             }
+            var positionCorrections = 0
+            defaultManager.onDiagnosticEvent = { event in
+                if event == "snap position does not match after resize; correcting position" { positionCorrections += 1 }
+            }
+            _ = WindowManager.move(a, to: base)
+            try check("delayed_origin_fixture_starts_unsnapped", await fixtureVisibility([a,b]) && near(WindowManager.frame(a.element), base))
+            let fixtureDirectory = report.deletingLastPathComponent()
+            try "arm-position-reset".write(to: fixtureDirectory.appendingPathComponent("command.txt"), atomically: true, encoding: .utf8)
+            let armed = fixtureDirectory.appendingPathComponent("position-reset-armed")
+            for _ in 0..<30 where !FileManager.default.fileExists(atPath: armed.path) {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            try check("delayed_origin_fixture_armed", FileManager.default.fileExists(atPath: armed.path))
+            try await drag(a, manager: defaultManager, to: CGPoint(x: target.midX, y: target.midY))
+            try check("window_did_reset_its_origin_after_resize", FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("position-reset-observed").path))
+            let delayedActual = WindowManager.frame(a.element)
+            metadata["delayed_origin_expected"] = box(target)
+            metadata["delayed_origin_actual"] = box(delayedActual)
+            try check("delayed_origin_window_has_tile_size", delayedActual.map { abs($0.width - target.width) < 5 && abs($0.height - target.height) < 5 } == true)
+            try check("one_drop_still_moves_window_to_tile_after_delayed_origin_reset", near(delayedActual, target))
+            try check("delayed_origin_corrected_once", positionCorrections == 1)
+            let settledPlacement = try defaultManager.store.load().profiles["desktop"]?.windows.first
+            try check("corrected_origin_and_size_persisted", settledPlacement.map {
+                near(Geometry.expanded($0.normalized, in: display.visible), target)
+            } == true)
+            defaultManager.undoLastMove()
+            try check("corrected_snap_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
             defaultManager.stop()
             metadata["scene_test_scope"]="Two independent scene profiles on the one actual display; synthetic unknown topology. Physical Home/Work/iPad reconnection is not claimed."
             metadata["cold_restore_expected"]=box(asymmetricTarget)

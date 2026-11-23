@@ -425,9 +425,55 @@ final class DesktopTilingManager: ObservableObject {
         guard let live = try? WindowManager.scan(bundleIDs: [window.placement.bundleID]),
               live.contains(where: { CFEqual($0.element, window.element) }),
               !detectingScene, commit(file) else { return }
-        let profile=currentProfile()
-        let exact = WindowManager.move(window, to: target)
-        guard let actual = WindowManager.frame(window.element) else { error = "The app window disappeared before its position could be saved."; return }
+        generation += 1
+        let token = generation
+        let scope = file.activeScope
+        let context = currentContext
+        _ = WindowManager.move(window, to: target)
+        guard let writtenFrame = WindowManager.frame(window.element) else {
+            error = "The app window closed before its position could be saved."
+            return
+        }
+
+        // The AX write can succeed before an app finishes applying the resize.
+        // Verify after settling and correct only the position, once, if needed.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
+            guard let self, self.canFinishSnap(token, scope: scope, context: context),
+                  let settled = WindowManager.frame(window.element) else { return }
+            if !self.atTileOrigin(settled, target),
+               abs(settled.width - writtenFrame.width) < 5, abs(settled.height - writtenFrame.height) < 5 {
+                self.onDiagnosticEvent?("snap position does not match after resize; correcting position")
+                WindowManager.reposition(window, atTopLeftOf: target)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [weak self] in
+                    guard let self, self.canFinishSnap(token, scope: scope, context: context),
+                          let final = WindowManager.frame(window.element) else { return }
+                    self.finishSnap(window, to: target, actual: final, displayID: display.id, previous: previous, live: live)
+                }
+            } else {
+                self.finishSnap(window, to: target, actual: settled, displayID: display.id, previous: previous, live: live)
+            }
+        }
+    }
+    private func canFinishSnap(_ token: Int, scope: String, context: SceneContext) -> Bool {
+        token == generation && !detectingScene && file.activeScope == scope && currentContext == context
+            && WindowManager.allowed && NSEvent.pressedMouseButtons == 0
+    }
+    private func atTileOrigin(_ frame: CGRect, _ tile: CGRect) -> Bool {
+        abs(frame.minX - tile.minX) < 5 && abs(frame.maxY - tile.maxY) < 5
+    }
+    private func finishSnap(_ window: LiveWindow, to target: CGRect, actual: CGRect, displayID: String,
+                            previous: LiveWindow, live: [LiveWindow]) {
+        guard let display = displays.first(where: { $0.id == displayID }) else { return }
+        let profile = currentProfile()
+        let positioned = atTileOrigin(actual, target)
+        let exact = positioned && abs(actual.width - target.width) < 5 && abs(actual.height - target.height) < 5
+        let operationUndo = Undo(scope: file.activeScope, profile: profile, windows: [previous], displays: displaySnapshot, context: currentContext)
+        guard positioned else {
+            undo = operationUndo
+            canUndo = true
+            status = "Couldn’t move \(window.placement.appName) to the tile. Its saved position is unchanged. Undo is available."
+            return
+        }
         var next = file
         var placement = window.placement
         var bindings = liveAssignments[bindingKey, default: []].filter { binding in
@@ -451,7 +497,8 @@ final class DesktopTilingManager: ObservableObject {
             bindings.removeAll { CFEqual($0.element, window.element) || $0.placementID == placement.id }
             bindings.append((window.element, placement.id)); liveAssignments[bindingKey] = bindings
         }
-        undo = Undo(scope: file.activeScope, profile: profile, windows: [previous], displays: displaySnapshot, context: currentContext); canUndo = true
+        undo = operationUndo
+        canUndo = true
         status = exact ? "Snapped \(placement.appName) — position saved for \(activeName)" : "\(placement.appName) constrained the window size. \(safe ? "Actual position saved." : "Position could not be saved inside this display.") Undo is available."
     }
     func restoreSavedWindows(connectedDisplays: [Display]? = nil) {
@@ -459,6 +506,7 @@ final class DesktopTilingManager: ObservableObject {
         if hasDisplayScenes && currentContext == .unassigned { status="Unrecognized setup — saved scene windows were not moved.";return }
         let profile=currentProfile()
         guard !profile.windows.isEmpty else { return }
+        cancelDrag()
         let connected = connectedDisplays ?? displays
         do {
             let live = try WindowManager.scan(bundleIDs: Set(profile.windows.map(\.bundleID)))
@@ -478,6 +526,7 @@ final class DesktopTilingManager: ObservableObject {
     }
     func undoLastMove() {
         guard let undo,!detectingScene,undo.context==currentContext else { return }
+        cancelDrag()
         var next = file
         var profile=currentProfile(scope:undo.scope);profile.windows=undo.profile.windows
         guard next.setProfile(profile,scope:undo.scope,context:undo.context) else { return }

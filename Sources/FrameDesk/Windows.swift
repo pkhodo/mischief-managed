@@ -111,6 +111,11 @@ enum WindowManager {
         }
         return result.sorted { $0.label.localizedStandardCompare($1.label) == .orderedAscending }
     }
+    static func reposition(_ window: LiveWindow, atTopLeftOf target: CGRect) {
+        var point = CGPoint(x: target.minX, y: Display.primaryTop - target.maxY)
+        guard let value = AXValueCreate(.cgPoint, &point) else { return }
+        _ = AXUIElementSetAttributeValue(window.element, kAXPositionAttribute as CFString, value)
+    }
     static func move(_ window: LiveWindow, to target: CGRect) -> Bool {
         let quartz = Geometry.flipped(target, primaryTop: Display.primaryTop)
         var position = quartz.origin; var size = quartz.size
