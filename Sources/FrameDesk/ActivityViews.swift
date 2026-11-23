@@ -25,132 +25,9 @@ struct ActivityRootView: View {
             }
     }
     var body: some View {
-        NavigationSplitView {
-            VStack(spacing: 0) {
-                List(selection: $manager.selectedID) {
-                    Section("Activities") {
-                        ForEach(filtered) { a in
-                            HStack {
-                                Image(systemName: a.favorite ? "star.fill" : "rectangle.3.group")
-                                    .foregroundStyle(a.favorite ? Color.accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(a.name).lineLimit(1)
-                                    Text(manager.session(a.id) != nil ? (a.keepOpen ? "Keep open" : "Website window tracked") : "Saved setup")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }.tag(a.id)
-                        }
-                    }
-                }.searchable(text: $search, prompt: "Find an activity").disabled(tiles != nil)
-                Divider()
-                HStack {
-                    Button { editor = Activity(name: "") } label: { Label("New activity", systemImage: "plus") }
-                        .disabled(manager.busy || tiles != nil)
-                    Spacer()
-                }.padding(12)
-            }.navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
-        } detail: {
-            if let activity = manager.activities.first(where: { $0.id == manager.selectedID }) {
-                if let tiles, tiles.activityID == activity.id {
-                    VStack(spacing: 0) {
-                        Label("\(activity.name) · \(tiles.displayName)", systemImage: "display")
-                            .font(.headline).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 24).padding(.top, 16)
-                        FreeformGridEditor(grid: tiles.grid, aspect: tiles.aspect, onSave: { grid in
-                            guard tiling.displays.contains(where: { $0.id == tiles.displayID }) else { return false }
-                            let saved = tiling.setGrid(grid, scope: activity.id.uuidString, name: activity.name,
-                                                      display: tiles.displayID, context: tiles.context)
-                            if saved { self.tiles = nil }
-                            return saved
-                        }, onCancel: { self.tiles = nil }).id(tiles.id)
-                    }.background(Color(nsColor: .windowBackgroundColor))
-                } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(activity.name).font(.largeTitle).fontWeight(.semibold).textSelection(.enabled)
-                                if tiling.hasDisplayScenes {
-                                    Label(tiling.sceneStatus, systemImage: "display.2").foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Button { manager.setFavorite(activity.id, !activity.favorite) } label: {
-                                Image(systemName: activity.favorite ? "star.fill" : "star")
-                            }.help(activity.favorite ? "Remove from favorites" : "Add to favorites")
-                                .accessibilityLabel(activity.favorite ? "Remove favorite" : "Favorite activity")
-                                .disabled(manager.busy)
-                            Button("Edit") { editor = activity }.disabled(manager.busy)
-                        }
-                        HStack {
-                            Button(manager.session(activity.id) == nil ? "Open activity" : "Return to activity") {
-                                Task { await manager.open(activity.id, state: state) }
-                            }.buttonStyle(.borderedProminent).disabled(manager.busy || state.busy)
-                            if manager.session(activity.id) != nil {
-                                Button("Save & close websites…") { closing = activity }
-                                    .disabled(manager.busy || activity.keepOpen)
-                            }
-                            Button("Share part of your screen") { sharing = true }.disabled(manager.busy)
-                            if manager.busy { ProgressView().controlSize(.small).accessibilityLabel("Updating activity") }
-                        }
-                        layoutOverview(activity)
-                        if !activity.websites.isEmpty {
-                            VStack(alignment: .leading, spacing: 9) {
-                                Label("Websites in Microsoft Edge", systemImage: "globe").font(.headline)
-                                Text("Opens a dedicated window in Edge’s current profile. Other activities and browser windows stay open.")
-                                    .font(.callout).foregroundStyle(.secondary)
-                                ForEach(Array(activity.websites.enumerated()), id: \.offset) { _, site in
-                                    Text(site).lineLimit(2).textSelection(.enabled)
-                                }
-                                Toggle("Keep this website window open", isOn: Binding(get: { activity.keepOpen }, set: { manager.setKeepOpen(activity.id, $0) }))
-                                    .disabled(manager.busy)
-                                if activity.keepOpen { Text("Turn this off before using Save & close websites.").font(.caption).foregroundStyle(.secondary) }
-                            }
-                        }
-                        if activity.area != nil {
-                            Label("This activity remembers a sharing area", systemImage: "rectangle.dashed")
-                            Button("Update saved sharing area from current area") {
-                                var updated = activity; updated.area = state.area; _ = manager.save(updated)
-                            }.disabled(manager.busy)
-                        }
-                        if !manager.message.isEmpty {
-                            Text(manager.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
-                        }
-                        Button("Delete saved activity…", role: .destructive) { deletion = activity }
-                            .disabled(manager.busy || manager.session(activity.id) != nil)
-                    }.padding(28).frame(maxWidth: 780, alignment: .leading)
-                }.background(Color(nsColor: .windowBackgroundColor))
-                }
-            } else {
-                if search.isEmpty {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Text("Mischief Managed").font(.largeTitle).fontWeight(.semibold)
-                        Button { openDesktopLayout() } label: {
-                            Label("Arrange windows", systemImage: "rectangle.split.2x2")
-                        }.buttonStyle(.borderedProminent)
-                        Text("Use desktop tiles, or create an activity to remember a layout.")
-                            .foregroundStyle(.secondary)
-                        Divider()
-                        Button { sharing = true } label: {
-                            Label("Share part of your screen", systemImage: "rectangle.dashed")
-                        }.disabled(manager.busy)
-                        Text("Choose an area, then share its preview in your call.")
-                            .foregroundStyle(.secondary)
-                    }.padding(32).frame(maxWidth: 540).frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(nsColor: .windowBackgroundColor))
-                } else {
-                    ContentUnavailableView("No matching activity", systemImage: "magnifyingglass",
-                                           description: Text("Try another name or clear the search."))
-                }
-            }
-        }
+        activitySplit
         .frame(minWidth: 820, minHeight: 620)
         .disabled(state.restarting)
-        .toolbar {
-            ToolbarItem { Button { openDesktopLayout() } label: { Label("Arrange windows", systemImage: "rectangle.split.2x2") }.help("Arrange windows") }
-            ToolbarItem { Button { sharing = true } label: { Label("Share part of your screen", systemImage: "rectangle.dashed") }.help("Share part of your screen").disabled(manager.busy) }
-            ToolbarItem { SettingsLink { Label("Settings", systemImage: "gearshape") }.help("Settings (⌘,)") }
-        }
         .safeAreaInset(edge: .bottom) {
             if let error = manager.error {
                 HStack(alignment: .top) {
@@ -188,6 +65,162 @@ struct ActivityRootView: View {
             ActivityDiagnostics.runIfRequested(manager: manager, state: state)
         }
     }
+    private var activitySplit: some View {
+        NavigationSplitView {
+            VStack(spacing: 0) {
+                List(selection: $manager.selectedID) {
+                    Section("Activities") {
+                        ForEach(filtered) { a in
+                            HStack {
+                                Image(systemName: a.favorite ? "star.fill" : "rectangle.3.group")
+                                    .foregroundStyle(a.favorite ? Color.accentColor : .secondary)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(a.name).lineLimit(1)
+                                    Text(manager.session(a.id) != nil ? (a.keepOpen ? "Keep open" : "Website window tracked") : "Saved setup")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.tag(a.id)
+                        }
+                    }
+                }.searchable(text: $search, prompt: "Find an activity").disabled(tiles != nil)
+                Divider()
+                HStack {
+                    Button { editor = Activity(name: "") } label: { Label("New activity", systemImage: "plus") }
+                        .disabled(manager.busy || tiles != nil)
+                    Spacer()
+                }.padding(12)
+            }.navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 320)
+        } detail: {
+            VStack(spacing: 0) {
+                taskActions
+                activityDetail
+            }
+        }
+    }
+
+    @ViewBuilder private var activityDetail: some View {
+        if let activity = manager.activities.first(where: { $0.id == manager.selectedID }) {
+            if let tiles, tiles.activityID == activity.id {
+                VStack(spacing: 0) {
+                    Label("\(activity.name) · \(tiles.displayName)", systemImage: "display")
+                        .font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 24).padding(.top, 16)
+                    FreeformGridEditor(grid: tiles.grid, aspect: tiles.aspect, onSave: { grid in
+                        guard tiling.displays.contains(where: { $0.id == tiles.displayID }) else { return false }
+                        let saved = tiling.setGrid(grid, scope: activity.id.uuidString, name: activity.name,
+                                                  display: tiles.displayID, context: tiles.context)
+                        if saved { self.tiles = nil }
+                        return saved
+                    }, onCancel: { self.tiles = nil }).id(tiles.id)
+                }.background(Color(nsColor: .windowBackgroundColor))
+            } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(activity.name).font(.largeTitle).fontWeight(.semibold).textSelection(.enabled)
+                            if tiling.hasDisplayScenes {
+                                Label(tiling.sceneStatus, systemImage: "display.2").foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button { manager.setFavorite(activity.id, !activity.favorite) } label: {
+                            Label(activity.favorite ? "Unfavorite" : "Favorite", systemImage: activity.favorite ? "star.fill" : "star")
+                        }.help(activity.favorite ? "Remove from favorites" : "Add to favorites")
+                            .accessibilityLabel(activity.favorite ? "Remove favorite" : "Favorite activity")
+                            .disabled(manager.busy)
+                        Button("Edit") { editor = activity }.disabled(manager.busy)
+                    }
+                    HStack {
+                        Button(manager.session(activity.id) == nil ? "Open activity" : "Return to activity") {
+                            Task { await manager.open(activity.id, state: state) }
+                        }.buttonStyle(.borderedProminent).disabled(manager.busy || state.busy)
+                        if manager.session(activity.id) != nil {
+                            Button("Save & close websites…") { closing = activity }
+                                .disabled(manager.busy || activity.keepOpen)
+                        }
+                        if manager.busy { ProgressView().controlSize(.small).accessibilityLabel("Updating activity") }
+                    }
+                    layoutOverview(activity)
+                    if !activity.websites.isEmpty {
+                        VStack(alignment: .leading, spacing: 9) {
+                            Label("Websites in Microsoft Edge", systemImage: "globe").font(.headline)
+                            Text("Opens a dedicated window in Edge’s current profile. Other activities and browser windows stay open.")
+                                .font(.callout).foregroundStyle(.secondary)
+                            ForEach(Array(activity.websites.enumerated()), id: \.offset) { _, site in
+                                Text(site).lineLimit(2).textSelection(.enabled)
+                            }
+                            Toggle("Keep this website window open", isOn: Binding(get: { activity.keepOpen }, set: { manager.setKeepOpen(activity.id, $0) }))
+                                .disabled(manager.busy)
+                            if activity.keepOpen { Text("Turn this off before using Save & close websites.").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                    if activity.area != nil {
+                        Label("This activity remembers a sharing area", systemImage: "rectangle.dashed")
+                        Button("Update saved sharing area from current area") {
+                            var updated = activity; updated.area = state.area; _ = manager.save(updated)
+                        }.disabled(manager.busy)
+                    }
+                    if !manager.message.isEmpty {
+                        Text(manager.message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                    Button("Delete saved activity…", role: .destructive) { deletion = activity }
+                        .disabled(manager.busy || manager.session(activity.id) != nil)
+                }.padding(28).frame(maxWidth: 780, alignment: .leading)
+            }.background(Color(nsColor: .windowBackgroundColor))
+            }
+        } else {
+            if search.isEmpty {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Mischief Managed").font(.largeTitle).fontWeight(.semibold)
+                    Button { openDesktopLayout() } label: {
+                        Label("Arrange windows", systemImage: "rectangle.split.2x2")
+                    }.buttonStyle(.borderedProminent)
+                    Text("Use desktop tiles, or create an activity to remember a layout.")
+                        .foregroundStyle(.secondary)
+                    Divider()
+                    Button { sharing = true } label: {
+                        Label("Share part of your screen", systemImage: "rectangle.dashed")
+                    }.disabled(manager.busy)
+                    Text("Choose an area, then share its preview in your call.")
+                        .foregroundStyle(.secondary)
+                }.padding(32).frame(maxWidth: 540).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            } else {
+                ContentUnavailableView("No matching activity", systemImage: "magnifyingglass",
+                                       description: Text("Try another name or clear the search."))
+            }
+        }
+    }
+
+    private var taskActions: some View {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                actionButtons(arrangeTitle: "Arrange windows", shareTitle: "Share part of your screen")
+                actionButtons(arrangeTitle: "Arrange", shareTitle: "Share area")
+            }
+            .padding(.horizontal, 18).padding(.vertical, 9)
+            Divider()
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private func actionButtons(arrangeTitle: String, shareTitle: String) -> some View {
+        HStack(spacing: 10) {
+            Button { openDesktopLayout() } label: {
+                Label(arrangeTitle, systemImage: "rectangle.split.2x2")
+            }.disabled(tiles != nil).accessibilityLabel("Arrange windows")
+            Button { sharing = true } label: {
+                Label(shareTitle, systemImage: "rectangle.dashed")
+            }.disabled(manager.busy || tiles != nil).accessibilityLabel("Share part of your screen")
+            Spacer(minLength: 4)
+            SettingsLink { Label("Settings", systemImage: "gearshape") }
+                .help("Settings (⌘,)")
+        }
+        .labelStyle(.titleAndIcon)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
     private func openDesktopLayout() {
         tiling.editorScope = manager.selectedID?.uuidString ?? "desktop"
         openWindow(id: "desktop-tiling")
