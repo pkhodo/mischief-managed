@@ -267,6 +267,28 @@ enum TilingDiagnostics {
             } == true)
             defaultManager.undoLastMove()
             try check("corrected_snap_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
+            var sizeCorrections = 0
+            defaultManager.onDiagnosticEvent = { event in
+                if event == "snap size does not match after settling; retrying resize" { sizeCorrections += 1 }
+            }
+            try "arm-size-reset".write(to: fixtureDirectory.appendingPathComponent("command.txt"), atomically: true, encoding: .utf8)
+            let sizeArmed = fixtureDirectory.appendingPathComponent("size-reset-armed")
+            for _ in 0..<30 where !FileManager.default.fileExists(atPath: sizeArmed.path) {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            try check("delayed_size_fixture_armed", FileManager.default.fileExists(atPath: sizeArmed.path))
+            try await drag(a, manager: defaultManager, to: CGPoint(x: target.midX, y: target.midY))
+            try await Task.sleep(for: .milliseconds(300))
+            try check("window_did_reset_its_size_after_resize", FileManager.default.fileExists(atPath: fixtureDirectory.appendingPathComponent("size-reset-observed").path))
+            metadata["delayed_size_actual"] = box(WindowManager.frame(a.element))
+            try check("one_drop_fills_tile_after_delayed_size_reset", near(WindowManager.frame(a.element), target))
+            try check("delayed_size_corrected_once", sizeCorrections == 1)
+            let resizedPlacement = try defaultManager.store.load().profiles["desktop"]?.windows.first
+            try check("corrected_size_persisted", resizedPlacement.map {
+                near(Geometry.expanded($0.normalized, in: display.visible), target)
+            } == true)
+            defaultManager.undoLastMove()
+            try check("corrected_resize_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
             // Compare the live result with independently calculated guide edges,
             // rather than comparing it with the application's old inset target.
             defaultManager.setGrid(TileGrid(preset: .focus), scope: "desktop", name: "Desktop", display: display.id)

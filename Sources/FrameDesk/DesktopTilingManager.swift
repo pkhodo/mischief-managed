@@ -430,27 +430,29 @@ final class DesktopTilingManager: ObservableObject {
         let scope = file.activeScope
         let context = currentContext
         _ = WindowManager.move(window, to: target)
-        guard let writtenFrame = WindowManager.frame(window.element) else {
-            error = "The app window closed before its position could be saved."
-            return
-        }
 
-        // The AX write can succeed before an app finishes applying the resize.
-        // Verify after settling and correct only the position, once, if needed.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
-            guard let self, self.canFinishSnap(token, scope: scope, context: context),
-                  let settled = WindowManager.frame(window.element) else { return }
-            if !self.atTileOrigin(settled, target),
-               abs(settled.width - writtenFrame.width) < 5, abs(settled.height - writtenFrame.height) < 5 {
-                self.onDiagnosticEvent?("snap position does not match after resize; correcting position")
-                WindowManager.reposition(window, atTopLeftOf: target)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [weak self] in
-                    guard let self, self.canFinishSnap(token, scope: scope, context: context),
-                          let final = WindowManager.frame(window.element) else { return }
-                    self.finishSnap(window, to: target, actual: final, displayID: display.id, previous: previous, live: live)
+        // Some apps apply AX geometry asynchronously or replace it after a drop.
+        // Give a slow resize time to settle before making another request.
+        Task { [weak self] in
+            let waits = [100, 150, 180, 180]
+            for (index, wait) in waits.enumerated() {
+                try? await Task.sleep(for: .milliseconds(wait))
+                guard let self, self.canFinishSnap(token, scope: scope, context: context) else { return }
+                guard let actual = WindowManager.frame(window.element) else {
+                    self.error = "The app window closed before its position could be saved."
+                    return
                 }
-            } else {
-                self.finishSnap(window, to: target, actual: settled, displayID: display.id, previous: previous, live: live)
+                if self.fillsTile(actual, target) || index == waits.count - 1 {
+                    self.finishSnap(window, to: target, actual: actual, displayID: display.id, previous: previous, live: live)
+                    return
+                }
+                if abs(actual.width - target.width) <= 1, abs(actual.height - target.height) <= 1 {
+                    self.onDiagnosticEvent?("snap position does not match after resize; correcting position")
+                    WindowManager.reposition(window, atTopLeftOf: target)
+                } else if index > 0 {
+                    self.onDiagnosticEvent?("snap size does not match after settling; retrying resize")
+                    _ = WindowManager.move(window, to: target)
+                }
             }
         }
     }
@@ -461,12 +463,16 @@ final class DesktopTilingManager: ObservableObject {
     private func atTileOrigin(_ frame: CGRect, _ tile: CGRect) -> Bool {
         abs(frame.minX - tile.minX) < 5 && abs(frame.maxY - tile.maxY) < 5
     }
+    private func fillsTile(_ frame: CGRect, _ tile: CGRect) -> Bool {
+        abs(frame.minX - tile.minX) <= 1 && abs(frame.maxX - tile.maxX) <= 1
+            && abs(frame.minY - tile.minY) <= 1 && abs(frame.maxY - tile.maxY) <= 1
+    }
     private func finishSnap(_ window: LiveWindow, to target: CGRect, actual: CGRect, displayID: String,
                             previous: LiveWindow, live: [LiveWindow]) {
         guard let display = displays.first(where: { $0.id == displayID }) else { return }
         let profile = currentProfile()
         let positioned = atTileOrigin(actual, target)
-        let exact = positioned && abs(actual.width - target.width) < 5 && abs(actual.height - target.height) < 5
+        let exact = fillsTile(actual, target)
         let operationUndo = Undo(scope: file.activeScope, profile: profile, windows: [previous], displays: displaySnapshot, context: currentContext)
         guard positioned else {
             undo = operationUndo
@@ -499,7 +505,7 @@ final class DesktopTilingManager: ObservableObject {
         }
         undo = operationUndo
         canUndo = true
-        status = exact ? "Snapped \(placement.appName) — position saved for \(activeName)" : "\(placement.appName) constrained the window size. \(safe ? "Actual position saved." : "Position could not be saved inside this display.") Undo is available."
+        status = exact ? "Snapped \(placement.appName) — position saved for \(activeName)" : "\(placement.appName) didn’t fill the tile. \(safe ? "Actual position saved." : "Position could not be saved inside this display.") Undo is available."
     }
     func restoreSavedWindows(connectedDisplays: [Display]? = nil) {
         guard !detectingScene, WindowManager.allowed else { return }

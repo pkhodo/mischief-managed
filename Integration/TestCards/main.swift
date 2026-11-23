@@ -4,7 +4,7 @@ import FrameDeskCore
 final class Cards: NSObject, NSApplicationDelegate {
     var windows: [NSWindow] = []
     var timer: Timer?
-    var positionResetObserver: NSObjectProtocol?
+    var frameResetObserver: NSObjectProtocol?
     let directory = URL(fileURLWithPath: ProcessInfo.processInfo.arguments.dropFirst().first ?? NSTemporaryDirectory())
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
@@ -34,18 +34,27 @@ final class Cards: NSObject, NSApplicationDelegate {
         let command = directory.appendingPathComponent("command.txt")
         if let text = try? String(contentsOf: command, encoding: .utf8) {
             switch text.trimmingCharacters(in: .whitespacesAndNewlines) {
-            case "arm-position-reset":
-                let ready = directory.appendingPathComponent("position-reset-armed")
+            case "arm-position-reset", "arm-size-reset":
+                let resetSize = text.trimmingCharacters(in: .whitespacesAndNewlines) == "arm-size-reset"
+                let resetName = resetSize ? "size-reset" : "position-reset"
+                let ready = directory.appendingPathComponent("\(resetName)-armed")
                 if !FileManager.default.fileExists(atPath: ready.path), let window = windows.first {
-                    // Model an app that restores the pre-resize origin after accepting AX geometry.
-                    positionResetObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self, weak window] _ in
-                        guard let self, let window, let observer = self.positionResetObserver else { return }
+                    // Model an app that replaces part of the frame after accepting AX geometry.
+                    let sizeBeforeResize = window.frame.size
+                    frameResetObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self, weak window] _ in
+                        guard let self, let window, let observer = self.frameResetObserver else { return }
                         NotificationCenter.default.removeObserver(observer)
-                        self.positionResetObserver = nil
+                        self.frameResetObserver = nil
                         let origin = window.frame.origin
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                            window.setFrameOrigin(origin)
-                            try? Data().write(to: self.directory.appendingPathComponent("position-reset-observed"))
+                            if resetSize {
+                                let current = window.frame
+                                window.setFrame(CGRect(x: current.minX, y: current.maxY - sizeBeforeResize.height,
+                                                       width: sizeBeforeResize.width, height: sizeBeforeResize.height), display: true)
+                            } else {
+                                window.setFrameOrigin(origin)
+                            }
+                            try? Data().write(to: self.directory.appendingPathComponent("\(resetName)-observed"))
                         }
                     }
                     try? Data().write(to: ready)
