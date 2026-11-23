@@ -231,6 +231,15 @@ enum TilingDiagnostics {
             try check("automatic_snap_fixture_visible", await fixtureVisibility([a,b]))
             try await drag(a, manager: defaultManager, to: CGPoint(x: target.midX, y: target.midY))
             try check("ordinary_mode_snaps_real_window_without_shift", near(WindowManager.frame(a.element), target))
+            for (label, point) in [
+                ("lower_left", CGPoint(x: target.minX + target.width * 0.12, y: target.minY + target.height * 0.12)),
+                ("upper_right", CGPoint(x: target.maxX - target.width * 0.12, y: target.maxY - target.height * 0.12)),
+            ] {
+                _ = WindowManager.move(a, to: base)
+                try check("tile_drop_\(label)_starts_unsnapped", await fixtureVisibility([a,b]) && near(WindowManager.frame(a.element), base))
+                try await drag(a, manager: defaultManager, to: point)
+                try check("tile_drop_\(label)_resizes_to_full_tile", near(WindowManager.frame(a.element), target))
+            }
             defaultManager.stop()
             metadata["scene_test_scope"]="Two independent scene profiles on the one actual display; synthetic unknown topology. Physical Home/Work/iPad reconnection is not claimed."
             metadata["cold_restore_expected"]=box(asymmetricTarget)

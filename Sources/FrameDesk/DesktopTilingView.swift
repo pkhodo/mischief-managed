@@ -58,18 +58,14 @@ struct DesktopTilingView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Desktop tiling").font(.largeTitle).fontWeight(.semibold)
-                    Text("Choose a layout for snapping windows.").foregroundStyle(.secondary)
+                    Text("Arrange windows").font(.largeTitle).fontWeight(.semibold)
+                    Text("Choose tiles, then drag a window into place.").foregroundStyle(.secondary)
                 }
                 HStack {
                     Toggle("Show grid", isOn: Binding(get: { tiling.showGrid }, set: { tiling.setShowGrid($0) })).toggleStyle(.switch)
                 }
                 if !state.accessibilityAllowed {
-                    HStack {
-                        Label("Accessibility access is needed to move windows.", systemImage: "hand.raised")
-                        Spacer()
-                        SettingsLink { Text("Open Settings") }
-                    }
+                    TaskAccessNotice(feature: .arranging).environmentObject(activities)
                 }
                 HStack {
                     Label(tiling.sceneStatus,systemImage:"display.2").font(.callout).foregroundStyle(.secondary)

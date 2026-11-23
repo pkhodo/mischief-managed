@@ -25,8 +25,8 @@ struct DisplayScenesView: View {
     private var sceneControls: some View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment:.leading,spacing:6) {
-                    Text("Display scenes").font(.title2).fontWeight(.semibold)
-                    Text("Save a scene for each monitor setup you use.").foregroundStyle(.secondary)
+                    Text("Display setups").font(.title2).fontWeight(.semibold)
+                    Text("Remember separate layouts for different monitor setups.").foregroundStyle(.secondary)
                 }
                 Label(tiling.sceneStatus,systemImage:"display.2").font(.headline).accessibilityAddTraits(.updatesFrequently)
                 if tiling.hasDisplayScenes {
@@ -42,7 +42,7 @@ struct DisplayScenesView: View {
                     HStack {
                         Text("Connected displays").font(.headline)
                         Spacer()
-                        Button("Save this setup as a scene…") { beginEdit(nil) }.disabled(tiling.detectingScene || tiling.sceneDisplays.isEmpty)
+                        Button("Save this display setup…") { beginEdit(nil) }.disabled(tiling.detectingScene || tiling.sceneDisplays.isEmpty)
                     }
                     ForEach(tiling.sceneDisplays) { display in
                         HStack {
@@ -80,7 +80,7 @@ struct DisplayScenesView: View {
                             }.padding(.top, 6)
                         }
                     }
-                    if !library.scenes.isEmpty { Divider(); Text("Saved scenes").font(.headline) }
+                    if !library.scenes.isEmpty { Divider(); Text("Saved display setups").font(.headline) }
                     ForEach(library.scenes) { scene in
                         VStack(alignment:.leading,spacing:8) {
                             HStack {
@@ -179,8 +179,8 @@ struct SceneRegistrationEditor:View {
     }
     var body:some View {
         VStack(alignment:.leading,spacing:16) {
-            Text("Save display scene").font(.title2)
-            TextField("Scene name",text:$name)
+            Text("Save display setup").font(.title2)
+            TextField("Setup name",text:$name)
             DisclosureGroup("Customize displays") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("An optional display can come and go. Each combination keeps its own layout.")
@@ -218,7 +218,7 @@ struct SceneRegistrationEditor:View {
             HStack {
                 Button("Cancel",action:onCancel)
                 Spacer()
-                Button("Save scene") {
+                Button("Save setup") {
                     var scene=draft.scene;scene.name=name.trimmingCharacters(in:.whitespacesAndNewlines)
                     scene.required=required;scene.optional=included.subtracting(required);scene.allowBuiltIn=allowBuiltIn;scene.requireBuiltIn=requireBuiltIn
                     if !onSave(scene,labels) { error="Could not save. The displays may have changed; your draft is kept. Check the error below, or cancel and review the connected setup." }

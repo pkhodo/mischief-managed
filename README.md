@@ -24,8 +24,8 @@ The build uses an ad hoc signature by default for local development. To keep the
 1. Create an activity and give it a name. Open it to activate its layout.
 2. Arrange your windows and choose **Save window arrangement…**. Select the windows you want Mischief Managed to remember. Use **Edit tiles** when you want reusable snap targets.
 3. Drag a window by its title bar to snap. Turn on **Show guides** for desktop outlines. Hold Option while dragging to place a window freely.
-4. Open **Settings → Display scenes** to register each monitor setup. Mischief Managed recognizes registered setups and can restore the active activity’s layout on reconnect if you enable that option.
-5. For meetings, open **Sharing**, set the capture area and start the preview. Choose that window in your meeting app’s share picker.
+4. Open **Settings → Display setups** to register each monitor setup. Mischief Managed recognizes registered setups and can restore the active activity’s layout on reconnect if you enable that option.
+5. For meetings, choose **Share part of your screen**. Adjust the area if needed, start the preview, then choose its window in your meeting app.
 
 Accessibility lets Mischief Managed read and position windows. Screen Recording lets it create the preview. Edge Automation is optional and only needed for opening or saving website activity windows. Mischief Managed stores layouts locally and makes no recording of the capture stream. A saved layout restores available windows. It cannot reconstruct closed documents or windows in other macOS Spaces.
 

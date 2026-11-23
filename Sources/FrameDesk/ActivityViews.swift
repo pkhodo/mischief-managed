@@ -70,7 +70,9 @@ struct ActivityRootView: View {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(activity.name).font(.largeTitle).fontWeight(.semibold).textSelection(.enabled)
-                                Label(tiling.sceneStatus, systemImage: "display.2").foregroundStyle(.secondary)
+                                if tiling.hasDisplayScenes {
+                                    Label(tiling.sceneStatus, systemImage: "display.2").foregroundStyle(.secondary)
+                                }
                             }
                             Spacer()
                             Button { manager.setFavorite(activity.id, !activity.favorite) } label: {
@@ -88,6 +90,7 @@ struct ActivityRootView: View {
                                 Button("Save & close websites…") { closing = activity }
                                     .disabled(manager.busy || activity.keepOpen)
                             }
+                            Button("Share part of your screen") { sharing = true }.disabled(manager.busy)
                             if manager.busy { ProgressView().controlSize(.small).accessibilityLabel("Updating activity") }
                         }
                         layoutOverview(activity)
@@ -106,7 +109,6 @@ struct ActivityRootView: View {
                         }
                         if activity.area != nil {
                             Label("This activity remembers a sharing area", systemImage: "rectangle.dashed")
-                            Button("Adjust or preview sharing area") { sharing = true }
                             Button("Update saved sharing area from current area") {
                                 var updated = activity; updated.area = state.area; _ = manager.save(updated)
                             }.disabled(manager.busy)
@@ -120,20 +122,33 @@ struct ActivityRootView: View {
                 }.background(Color(nsColor: .windowBackgroundColor))
                 }
             } else {
-                ContentUnavailableView {
-                    Label(search.isEmpty ? "Your activities, ready when you are" : "No matching activity", systemImage: "rectangle.3.group")
-                } description: {
-                    Text(search.isEmpty ? "Create a setup for each kind of work. Save its websites and window arrangement, then return to it from here or the menu bar." : "Try another name or clear the search.")
-                } actions: {
-                    Button("Create an activity") { editor = Activity(name: "") }.disabled(manager.busy)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color(nsColor: .windowBackgroundColor))
+                if search.isEmpty {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Text("Mischief Managed").font(.largeTitle).fontWeight(.semibold)
+                        Button { openDesktopLayout() } label: {
+                            Label("Arrange windows", systemImage: "rectangle.split.2x2")
+                        }.buttonStyle(.borderedProminent)
+                        Text("Use desktop tiles, or create an activity to remember a layout.")
+                            .foregroundStyle(.secondary)
+                        Divider()
+                        Button { sharing = true } label: {
+                            Label("Share part of your screen", systemImage: "rectangle.dashed")
+                        }.disabled(manager.busy)
+                        Text("Choose an area, then share its preview in your call.")
+                            .foregroundStyle(.secondary)
+                    }.padding(32).frame(maxWidth: 540).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                } else {
+                    ContentUnavailableView("No matching activity", systemImage: "magnifyingglass",
+                                           description: Text("Try another name or clear the search."))
+                }
             }
         }
         .frame(minWidth: 820, minHeight: 620)
         .disabled(state.restarting)
         .toolbar {
-            ToolbarItem { Button { tiling.editorScope = tiling.file.activeScope; openWindow(id: "desktop-tiling") } label: { Label("Desktop tiling", systemImage: "rectangle.split.2x2") } }
-            ToolbarItem { Button { sharing = true } label: { Label("Sharing", systemImage: "rectangle.on.rectangle") }.disabled(manager.busy) }
+            ToolbarItem { Button { openDesktopLayout() } label: { Label("Arrange windows", systemImage: "rectangle.split.2x2") }.help("Arrange windows") }
+            ToolbarItem { Button { sharing = true } label: { Label("Share part of your screen", systemImage: "rectangle.dashed") }.help("Share part of your screen").disabled(manager.busy) }
             ToolbarItem { SettingsLink { Label("Settings", systemImage: "gearshape") }.help("Settings (⌘,)") }
         }
         .safeAreaInset(edge: .bottom) {
@@ -152,7 +167,7 @@ struct ActivityRootView: View {
         .onChange(of: manager.selectedID) { _, selection in
             if tiles?.activityID != selection { tiles = nil }
         }
-        .sheet(isPresented: $sharing) { SharingSettingsView().environmentObject(state) }
+        .sheet(isPresented: $sharing) { ShareAreaView().environmentObject(state).environmentObject(manager) }
         .confirmationDialog("Delete “\(deletion?.name ?? "")”?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } })) {
             Button("Delete saved setup", role: .destructive) { if let deletion { manager.delete(deletion.id) }; deletion = nil }
         } message: { Text("Only the saved setup is deleted. Your app windows and documents stay open.") }
@@ -164,6 +179,7 @@ struct ActivityRootView: View {
         .onChange(of: phase) { _, value in if value == .active { manager.refreshBrowserLaunch(); state.refreshPermissions() } }
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--activity-ui-snapshot") { tiling.refreshSceneDetection() }
+            if ProcessInfo.processInfo.arguments.contains("--activity-ui-sharing") { sharing = true }
             if ProcessInfo.processInfo.arguments.contains("--activity-ui-editor") { editor = Activity(name: "") }
             if ProcessInfo.processInfo.arguments.contains("--activity-ui-tiles"),
                let activity = manager.activities.first(where: { $0.id == manager.selectedID }), let display = tiling.displays.first {
@@ -171,6 +187,10 @@ struct ActivityRootView: View {
             }
             ActivityDiagnostics.runIfRequested(manager: manager, state: state)
         }
+    }
+    private func openDesktopLayout() {
+        tiling.editorScope = manager.selectedID?.uuidString ?? "desktop"
+        openWindow(id: "desktop-tiling")
     }
     private func beginTileEdit(for activity: Activity, display: Display) {
         tiles = ActivityTileDraft(activityID: activity.id, displayID: display.id, displayName: tiling.displayLabel(display),
@@ -185,14 +205,14 @@ struct ActivityRootView: View {
         let shownWindows = windows.filter { $0.displayID == display?.id || $0.displayID == display.map { tiling.displayKey($0.id) } }
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Window layout").font(.headline)
+                Text("Arrange windows").font(.headline)
                 Spacer()
                 if tiling.displays.count > 1 {
                     Picker("Display", selection: Binding(get: { display?.id ?? "" }, set: { layoutDisplayID = $0 })) {
                         ForEach(tiling.displays) { Text(tiling.displayLabel($0)).tag($0.id) }
                     }.fixedSize()
                 }
-                SettingsLink { Text("Display settings…") }
+                SettingsLink { Text("Display setups…") }
             }
             if let display, showLayout {
                 let grid = tiling.grid(scope: scope, display: display.id)
@@ -214,14 +234,14 @@ struct ActivityRootView: View {
                     Toggle("Show guides", isOn: Binding(get: { tiling.showGrid }, set: { tiling.setShowGrid($0) }))
                         .help("Keep subtle, click-through tile outlines on the desktop")
                 }
-                Text(tiling.file.activeScope == scope ? "Drag a window to snap. Hold Option to place it freely." : "Open this activity to use its tiles and guides.")
+                Text(tiling.file.activeScope == scope ? "Drag a title bar and release inside a tile to resize the window. Hold Option to move it freely." : "Open this activity to use its tiles and guides.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(display == nil ? "Connect a display to see its layout." : "Choose or register a matching display scene to use its saved layout.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             if !state.accessibilityAllowed {
-                SettingsLink { Text("Enable Accessibility to save and restore windows") }
+                TaskAccessNotice(feature: .arranging)
             }
             if let error = tiling.error {
                 Label(error, systemImage: "exclamationmark.triangle").font(.callout).textSelection(.enabled)
@@ -373,20 +393,5 @@ struct ActivityEditor: View {
             draft.area = rememberArea ? (draft.area ?? state.area) : nil
             if manager.save(draft) { dismiss() } else { localError = manager.error }
         } catch { localError = error.localizedDescription }
-    }
-}
-
-struct SharingSettingsView: View {
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack { Text("Sharing").font(.title2); Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.cancelAction) }.padding()
-            ControlView(showLegacyLayouts: false, showPermissions: false)
-            HStack {
-                Text("Mischief Managed \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") · activities preview").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Text("Native Edge Workspaces: not connected").font(.caption).foregroundStyle(.secondary)
-            }.padding()
-        }.frame(width: 680, height: 780).background(Color(nsColor: .windowBackgroundColor))
     }
 }

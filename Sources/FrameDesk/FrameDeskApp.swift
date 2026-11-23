@@ -41,7 +41,7 @@ struct FrameDeskApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .option]).disabled(!state.canUndo)
             }
         }
-        Window("Desktop tiling", id: "desktop-tiling") {
+        Window("Arrange windows", id: "desktop-tiling") {
             DesktopTilingView().environmentObject(state).environmentObject(activities).environmentObject(state.tiling)
         }.defaultSize(width: 680, height: 850).windowResizability(.contentMinSize)
         Settings {
@@ -64,7 +64,7 @@ struct MenuContents: View {
     @EnvironmentObject var tiling: DesktopTilingManager
     var body: some View {
         Button("Open Mischief Managed") { openWindow(id: "workspace"); NSApp.activate(ignoringOtherApps: true) }
-        Button("Desktop tiling…") { tiling.editorScope = tiling.file.activeScope; openWindow(id: "desktop-tiling"); NSApp.activate(ignoringOtherApps: true) }
+        Button("Arrange windows…") { tiling.editorScope = tiling.file.activeScope; openWindow(id: "desktop-tiling"); NSApp.activate(ignoringOtherApps: true) }
         Toggle("Show desktop grid", isOn: Binding(get: { tiling.showGrid }, set: { tiling.setShowGrid($0) }))
         Menu("Place focused window") {
             ForEach(Array(tiling.displays.enumerated()), id: \.element.id) { index, display in
