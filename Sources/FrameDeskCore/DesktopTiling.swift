@@ -40,8 +40,12 @@ public struct TileGrid: Codable, Equatable, Sendable {
     public func frames(in bounds: CGRect) -> [CGRect] {
         zones.map { zone in
             let cell = Geometry.expanded(zone, in: bounds)
-            let gap = min(4, cell.width/10, cell.height/10)
-            return cell.insetBy(dx: gap, dy: gap).integral.intersection(bounds)
+            // Round shared edges in the same direction so adjacent tiles meet.
+            let left = min(max(cell.minX.rounded(), bounds.minX), bounds.maxX)
+            let right = min(max(cell.maxX.rounded(), bounds.minX), bounds.maxX)
+            let bottom = min(max(cell.minY.rounded(), bounds.minY), bounds.maxY)
+            let top = min(max(cell.maxY.rounded(), bounds.minY), bounds.maxY)
+            return CGRect(x: left, y: bottom, width: right - left, height: top - bottom)
         }
     }
     public func zone(at point: CGPoint, in bounds: CGRect) -> Int? {

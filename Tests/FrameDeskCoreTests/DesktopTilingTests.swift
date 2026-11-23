@@ -25,11 +25,21 @@ struct DesktopTilingTests {
                 for (i, frame) in frames.enumerated() {
                     #expect(display.contains(frame))
                     #expect(grid.zone(at: CGPoint(x: frame.midX, y: frame.midY), in: display) == i)
-                    for other in frames.dropFirst(i+1) { #expect(!frame.intersects(other)) }
+                    for other in frames.dropFirst(i+1) { #expect(frame.intersection(other).isEmpty) }
                 }
                 #expect(grid.zone(at: CGPoint(x: display.minX-1, y: display.midY), in: display) == nil)
             }
         }
+    }
+    @Test func focusTilesFillTheGuidesWithoutGapsAtOddDisplayHeights() {
+        let bounds = CGRect(x: 0, y: 81, width: 3840, height: 2049)
+        let grid = TileGrid(preset: .focus)
+        let frames = grid.frames(in: bounds)
+        #expect(frames[1] == CGRect(x: 2496, y: 1106, width: 1344, height: 1024))
+        #expect(frames[0].maxX == frames[1].minX)
+        #expect(frames[2].maxY == frames[1].minY)
+        #expect(frames[0].union(frames[1]).union(frames[2]) == bounds)
+        #expect(grid.zone(at: CGPoint(x: 2496, y: 1106), in: bounds) == 1)
     }
     @Test func perActivityAndDisplaySettingsSurviveRoundTrip() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -567,9 +567,9 @@ final class DesktopTilingManager: ObservableObject {
             panels[display.id] = panel
             let config = grid(display: display.id)
             panel.setFrame(display.visible, display: false)
-            let bounds = CGRect(origin: .zero, size: display.visible.size)
-            panel.gridView.frames = config.frames(in: bounds)
-            panel.gridView.guideFrames = config.zones.map { Geometry.expanded($0, in: bounds) }
+            panel.gridView.frames = config.frames(in: display.visible).map {
+                $0.offsetBy(dx: -display.visible.minX, dy: -display.visible.minY)
+            }
             panel.gridView.isDraggingWindow = dragTarget != nil
             panel.gridView.highlight = dragTarget?.0 == display.id ? dragTarget?.1 : nil
             panel.gridView.needsDisplay = true
@@ -595,14 +595,13 @@ final class GridPanel: NSPanel {
 final class DesktopGridView: NSView {
     var frames: [CGRect] = []
     var highlight: Int?
-    var guideFrames: [CGRect] = []
     var isDraggingWindow = false
     override init(frame frameRect: NSRect) { super.init(frame: frameRect); setAccessibilityElement(false) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func draw(_ dirtyRect: NSRect) {
         if !isDraggingWindow {
             let path = NSBezierPath()
-            for rect in guideFrames { path.appendRect(rect.insetBy(dx: 0.5, dy: 0.5)) }
+            for rect in frames { path.appendRect(rect.insetBy(dx: 0.5, dy: 0.5)) }
             let highContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
             NSColor.black.withAlphaComponent(highContrast ? 0.72 : 0.28).setStroke()
             path.lineWidth = 2

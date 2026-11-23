@@ -267,6 +267,21 @@ enum TilingDiagnostics {
             } == true)
             defaultManager.undoLastMove()
             try check("corrected_snap_undo_restores_original_frame", near(WindowManager.frame(a.element), base))
+            // Compare the live result with independently calculated guide edges,
+            // rather than comparing it with the application's old inset target.
+            defaultManager.setGrid(TileGrid(preset: .focus), scope: "desktop", name: "Desktop", display: display.id)
+            let bounds = display.visible
+            let seamX = (bounds.minX + bounds.width * 0.65).rounded()
+            let seamY = bounds.midY.rounded()
+            let fullTile = CGRect(x: seamX, y: seamY, width: bounds.maxX - seamX, height: bounds.maxY - seamY)
+            try await drag(a, manager: defaultManager, to: CGPoint(x: fullTile.midX, y: fullTile.midY))
+            let fullTileActual = WindowManager.frame(a.element)
+            metadata["focus_guide_bounds"] = box(fullTile)
+            metadata["focus_snap_frame"] = box(fullTileActual)
+            try check("focus_snap_fills_visible_tile_to_within_one_point", fullTileActual.map {
+                abs($0.minX - fullTile.minX) <= 1 && abs($0.maxX - fullTile.maxX) <= 1 &&
+                abs($0.minY - fullTile.minY) <= 1 && abs($0.maxY - fullTile.maxY) <= 1
+            } == true)
             defaultManager.stop()
             metadata["scene_test_scope"]="Two independent scene profiles on the one actual display; synthetic unknown topology. Physical Home/Work/iPad reconnection is not claimed."
             metadata["cold_restore_expected"]=box(asymmetricTarget)
